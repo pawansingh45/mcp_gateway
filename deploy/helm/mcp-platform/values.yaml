@@ -1,0 +1,97 @@
+# Defaults are production-safe-ish; values-local.yaml / values-prod.yaml override only environment differences.
+
+images:
+  registry: ""                 # e.g. ghcr.io/your-org  (empty = local images loaded into kind)
+  pullPolicy: IfNotPresent
+  imagePullSecrets: []
+  gateway:   { repository: mcp-platform/gateway,   tag: "" }   # tag defaults to Chart.appVersion
+  dashboard: { repository: mcp-platform/dashboard, tag: "" }
+  wooMcp:    { repository: mcp-platform/woo-mcp,   tag: "" }
+  refMcp:    { repository: mcp-platform/ref-mcp,   tag: "" }
+
+storageClass: ""               # "" = cluster default. k3s: local-path. Managed clouds: their SSD class.
+
+ingress:
+  className: nginx             # k3s ships Traefik: use "traefik"
+  scheme: http                 # http | https  (public URL scheme; https once TLS is on)
+  storeHost: shop.localtest.me
+  gatewayHost: gateway.localtest.me
+  annotations: {}
+  tls:
+    enabled: false
+    clusterIssuer: ""          # cert-manager ClusterIssuer name, e.g. letsencrypt-prod
+    storeSecretName: store-tls
+    gatewaySecretName: gateway-tls
+
+# One Secret holds every credential. Leave existingSecret empty and the chart generates strong random
+# values once (and keeps them across upgrades via `lookup`). In production create the Secret yourself
+# (External Secrets / SOPS / sealed-secrets) and set existingSecret; required keys are listed in README.
+existingSecret: ""
+secrets:
+  adminPassword: ""            # optional override; default random
+  llmApiKey: ""                # set with --set secrets.llmApiKey=...  (never commit it)
+
+store:
+  enabled: true
+  title: "Demo Store"
+  timezone: "UTC"              # IANA name; also used by the MCP server for "today"
+  currency: USD
+  country: "US:CA"
+  adminUser: admin
+  adminEmail: admin@example.com
+  wooVersion: ""               # "" = latest WooCommerce at first boot; pin in production, e.g. 9.4.2
+  wordpress:
+    image: wordpress:apache
+    cliImage: wordpress:cli    # pin both images in production
+    persistence: { size: 5Gi }
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { cpu: "1", memory: 768Mi }
+    bootstrapResources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits: { cpu: 500m, memory: 512Mi }
+  mariadb:
+    image: mariadb:11.4
+    persistence: { size: 5Gi }
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { cpu: "1", memory: 768Mi }
+
+wooMcp:
+  replicas: 1
+  resources:
+    requests: { cpu: 25m, memory: 64Mi }
+    limits: { cpu: 300m, memory: 192Mi }
+
+referenceServers:              # the two extra upstream servers (clock + notes)
+  enabled: true
+  resources:
+    requests: { cpu: 10m, memory: 48Mi }
+    limits: { cpu: 200m, memory: 128Mi }
+  notesPersistence: { enabled: true, size: 200Mi }
+
+gateway:
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 384Mi }
+  persistence: { size: 1Gi }   # SQLite lives here => single replica (see docs/SYSTEM_DESIGN.md)
+  admin: { email: admin@example.com }
+  callTimeoutSeconds: 20
+  rateLimitPerMinute: 120
+  cookieSecure: false          # true behind HTTPS
+  ssrf:
+    extraAllowedHosts: []      # extra in-cluster hostnames admins may register, e.g. ["github-mcp", "*.tools.svc.cluster.local"]
+  extraSeedServers: []         # additional servers registered at first boot (same shape as the built-ins)
+  llm:
+    baseUrl: https://api.groq.com/openai/v1    # any OpenAI-compatible endpoint (Gemini, OpenRouter, Ollama...)
+    model: openai/gpt-oss-120b
+
+dashboard:
+  replicas: 1
+  resources:
+    requests: { cpu: 10m, memory: 16Mi }
+    limits: { cpu: 100m, memory: 64Mi }
+
+networkPolicy:
+  enabled: true
+  ingressControllerNamespace: ingress-nginx   # k3s/Traefik: kube-system

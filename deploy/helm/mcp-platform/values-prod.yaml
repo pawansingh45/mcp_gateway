@@ -1,0 +1,37 @@
+# Single-node k3s VPS. Replace the example domains; point their DNS A records at the VPS public IP.
+# Install: helm upgrade --install mcp deploy/helm/mcp-platform -n mcp -f values-prod.yaml \
+#            --set secrets.llmApiKey=$LLM_API_KEY
+images:
+  registry: ghcr.io/YOUR-ORG   # push the four images here (see README)
+  pullPolicy: IfNotPresent
+ingress:
+  className: traefik           # k3s default ingress controller
+  scheme: https
+  storeHost: shop.example.com
+  gatewayHost: gateway.example.com
+  tls:
+    enabled: true
+    clusterIssuer: letsencrypt-prod   # cert-manager
+storageClass: local-path        # k3s default; use Longhorn/EBS/etc. if you have them
+existingSecret: ""              # recommended: create the Secret out-of-band and name it here
+store:
+  title: "My Store"
+  timezone: Asia/Kolkata
+  currency: INR
+  country: "IN:UP"
+  wooVersion: "9.4.2"           # pin! (check the current release before deploying)
+  wordpress:
+    persistence: { size: 20Gi }
+    resources:
+      requests: { cpu: 250m, memory: 512Mi }
+      limits: { cpu: "2", memory: 1Gi }
+  mariadb:
+    persistence: { size: 20Gi }
+    resources:
+      requests: { cpu: 250m, memory: 512Mi }
+      limits: { cpu: "2", memory: 1Gi }
+gateway:
+  cookieSecure: true
+  admin: { email: you@example.com }
+networkPolicy:
+  ingressControllerNamespace: kube-system   # Traefik lives here on k3s

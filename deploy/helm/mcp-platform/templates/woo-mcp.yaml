@@ -1,0 +1,56 @@
+{{- if .Values.store.enabled }}
+{{- $sel := dict "root" . "component" "woo-mcp" }}
+{{- $secret := include "mcp.secretName" . }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-woo-mcp          # ClusterIP only: there is deliberately no Ingress for this
+  labels: {{- include "mcp.labels" $sel | nindent 4 }}
+spec:
+  selector: {{- include "mcp.selector" $sel | nindent 4 }}
+  ports: [{ name: http, port: 8080, targetPort: http }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-woo-mcp
+  labels: {{- include "mcp.labels" $sel | nindent 4 }}
+spec:
+  replicas: {{ .Values.wooMcp.replicas }}
+  selector:
+    matchLabels: {{- include "mcp.selector" $sel | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "mcp.labels" $sel | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false   # no component talks to the Kubernetes API
+      {{- include "mcp.pullSecrets" . | nindent 6 }}
+      {{- include "mcp.podSecurity" . | nindent 6 }}
+      containers:
+        - name: woo-mcp
+          image: {{ include "mcp.image" (dict "root" . "img" .Values.images.wooMcp) }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          {{- include "mcp.containerSecurity" . | nindent 10 }}
+          ports: [{ name: http, containerPort: 8080 }]
+          env:
+            - { name: WOO_BASE_URL, value: "http://{{ .Release.Name }}-wordpress" }
+            - { name: STORE_TIMEZONE, value: {{ .Values.store.timezone | quote }} }
+            - name: WOO_CONSUMER_KEY
+              valueFrom: { secretKeyRef: { name: {{ $secret }}, key: woo-consumer-key } }
+            - name: WOO_CONSUMER_SECRET
+              valueFrom: { secretKeyRef: { name: {{ $secret }}, key: woo-consumer-secret } }
+            - name: MCP_AUTH_TOKEN     # the credential only the gateway knows
+              valueFrom: { secretKeyRef: { name: {{ $secret }}, key: mcp-woo-token } }
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources: {{- toYaml .Values.wooMcp.resources | nindent 12 }}
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - { name: tmp, emptyDir: {} }
+{{- end }}

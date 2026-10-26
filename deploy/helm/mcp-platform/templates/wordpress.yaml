@@ -1,0 +1,123 @@
+{{- if .Values.store.enabled }}
+{{- $sel := dict "root" . "component" "wordpress" }}
+{{- $secret := include "mcp.secretName" . }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-wordpress
+  labels: {{- include "mcp.labels" $sel | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep       # never delete store content on `helm uninstall`/rollback
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- include "mcp.storageClass" . | nindent 2 }}
+  resources:
+    requests: { storage: {{ .Values.store.wordpress.persistence.size }} }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-wordpress
+  labels: {{- include "mcp.labels" $sel | nindent 4 }}
+spec:
+  selector: {{- include "mcp.selector" $sel | nindent 4 }}
+  ports: [{ name: http, port: 80, targetPort: http }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-wordpress
+  labels: {{- include "mcp.labels" $sel | nindent 4 }}
+spec:
+  replicas: 1
+  strategy: { type: Recreate }          # RWO volume: never run two pods against it during a rollout
+  selector:
+    matchLabels: {{- include "mcp.selector" $sel | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "mcp.labels" $sel | nindent 8 }}
+      annotations:
+        checksum/bootstrap: {{ include (print $.Template.BasePath "/configmap-bootstrap.yaml") . | sha256sum }}
+    spec:
+      automountServiceAccountToken: false   # no component talks to the Kubernetes API
+      {{- include "mcp.pullSecrets" . | nindent 6 }}
+      containers:
+        - name: wordpress
+          image: {{ .Values.store.wordpress.image }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          ports: [{ name: http, containerPort: 80 }]
+          env:
+            - { name: WORDPRESS_DB_HOST, value: "{{ .Release.Name }}-mariadb:3306" }
+            - { name: WORDPRESS_DB_NAME, value: wordpress }
+            - { name: WORDPRESS_DB_USER, value: wordpress }
+            - name: WORDPRESS_DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ $secret }}, key: mariadb-password } }
+            - name: WORDPRESS_CONFIG_EXTRA
+              value: |
+                define('WP_HOME', '{{ include "mcp.storeUrl" . }}');
+                define('WP_SITEURL', '{{ include "mcp.storeUrl" . }}');
+                define('DISALLOW_FILE_EDIT', true);
+                /* TLS terminates at the Ingress, which sets X-Forwarded-Proto itself. In-cluster callers
+                   (the WooCommerce MCP server) send the same header: WooCommerce only allows API-key
+                   Basic auth when it believes the request is HTTPS. */
+                if (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') { $_SERVER['HTTPS'] = 'on'; }
+          readinessProbe:
+            httpGet: { path: /wp-login.php, port: http }
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet: { path: /wp-login.php, port: http }
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            timeoutSeconds: 10
+            failureThreshold: 6
+          resources: {{- toYaml .Values.store.wordpress.resources | nindent 12 }}
+          volumeMounts:
+            - { name: wordpress, mountPath: /var/www/html }
+        - name: bootstrap
+          image: {{ .Values.store.wordpress.cliImage }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          command: ["/bin/bash", "/scripts/bootstrap.sh"]
+          securityContext:
+            runAsUser: 33          # www-data in the apache image: files on the shared volume keep one owner
+            runAsGroup: 33
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          env:
+            - { name: HOME, value: /tmp }
+            - { name: SITE_URL, value: "{{ include "mcp.storeUrl" . }}" }
+            - { name: SITE_TITLE, value: {{ .Values.store.title | quote }} }
+            - { name: STORE_TIMEZONE, value: {{ .Values.store.timezone | quote }} }
+            - { name: STORE_CURRENCY, value: {{ .Values.store.currency | quote }} }
+            - { name: STORE_COUNTRY, value: {{ .Values.store.country | quote }} }
+            - { name: WOO_VERSION, value: {{ .Values.store.wooVersion | quote }} }
+            - { name: WP_ADMIN_USER, value: {{ .Values.store.adminUser | quote }} }
+            - { name: WP_ADMIN_EMAIL, value: {{ .Values.store.adminEmail | quote }} }
+            - name: WP_ADMIN_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ $secret }}, key: wp-admin-password } }
+            - name: WOO_CONSUMER_KEY
+              valueFrom: { secretKeyRef: { name: {{ $secret }}, key: woo-consumer-key } }
+            - name: WOO_CONSUMER_SECRET
+              valueFrom: { secretKeyRef: { name: {{ $secret }}, key: woo-consumer-secret } }
+          readinessProbe:       # the Pod only joins the Service once the store is fully installed
+            exec: { command: ["test", "-f", "/tmp/bootstrap-done"] }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 90
+          livenessProbe:
+            exec: { command: ["true"] }
+            periodSeconds: 60
+          resources: {{- toYaml .Values.store.wordpress.bootstrapResources | nindent 12 }}
+          volumeMounts:
+            - { name: wordpress, mountPath: /var/www/html }
+            - { name: scripts, mountPath: /scripts, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: wordpress
+          persistentVolumeClaim: { claimName: {{ .Release.Name }}-wordpress }
+        - name: scripts
+          configMap: { name: {{ .Release.Name }}-store-bootstrap, defaultMode: 0555 }
+        - name: tmp
+          emptyDir: {}
+{{- end }}

@@ -1,0 +1,20 @@
+# kind / k3d / minikube on a laptop. *.localtest.me resolves to 127.0.0.1 via public DNS: no /etc/hosts edits.
+# kind maps host :80 -> ingress-nginx (see deploy/kind/kind-config.yaml).
+images:
+  pullPolicy: IfNotPresent     # images are loaded with `kind load docker-image`
+ingress:
+  className: nginx
+  scheme: http
+  storeHost: shop.localtest.me
+  gatewayHost: gateway.localtest.me
+storageClass: ""               # kind's default "standard" (rancher local-path)
+store:
+  timezone: Asia/Kolkata
+  currency: INR
+  country: "IN:UP"
+  wordpress:
+    persistence: { size: 2Gi }
+  mariadb:
+    persistence: { size: 2Gi }
+networkPolicy:
+  ingressControllerNamespace: ingress-nginx

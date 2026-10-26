@@ -1,0 +1,62 @@
+{{- if .Values.store.enabled }}
+{{- $sel := dict "root" . "component" "mariadb" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-mariadb
+  labels: {{- include "mcp.labels" $sel | nindent 4 }}
+spec:
+  selector: {{- include "mcp.selector" $sel | nindent 4 }}
+  ports: [{ name: mysql, port: 3306, targetPort: mysql }]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Release.Name }}-mariadb
+  labels: {{- include "mcp.labels" $sel | nindent 4 }}
+spec:
+  serviceName: {{ .Release.Name }}-mariadb
+  replicas: 1
+  selector:
+    matchLabels: {{- include "mcp.selector" $sel | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "mcp.labels" $sel | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false   # no component talks to the Kubernetes API
+      {{- include "mcp.pullSecrets" . | nindent 6 }}
+      containers:
+        - name: mariadb
+          image: {{ .Values.store.mariadb.image }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          ports: [{ name: mysql, containerPort: 3306 }]
+          env:
+            - { name: MARIADB_DATABASE, value: wordpress }
+            - { name: MARIADB_USER, value: wordpress }
+            - name: MARIADB_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ include "mcp.secretName" . }}, key: mariadb-password } }
+            - name: MARIADB_ROOT_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ include "mcp.secretName" . }}, key: mariadb-root-password } }
+          readinessProbe:
+            exec: { command: ["healthcheck.sh", "--connect", "--innodb_initialized"] }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            exec: { command: ["healthcheck.sh", "--connect"] }
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources: {{- toYaml .Values.store.mariadb.resources | nindent 12 }}
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/mysql }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- include "mcp.storageClass" . | nindent 8 }}
+        resources:
+          requests: { storage: {{ .Values.store.mariadb.persistence.size }} }
+{{- end }}

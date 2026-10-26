@@ -1,0 +1,20 @@
+MCP platform "{{ .Release.Name }}" installed in namespace "{{ .Release.Namespace }}".
+
+  Storefront : {{ include "mcp.storeUrl" . }}
+  Dashboard  : {{ include "mcp.gatewayUrl" . }}
+  MCP URL    : {{ include "mcp.gatewayUrl" . }}/mcp     (Authorization: Bearer <your gw_ key>)
+
+First boot of the store takes a few minutes (WordPress + WooCommerce install). Watch it:
+  kubectl -n {{ .Release.Namespace }} get pods -w
+  kubectl -n {{ .Release.Namespace }} logs deploy/{{ .Release.Name }}-wordpress -c bootstrap -f
+
+Credentials (generated; read them from the Secret):
+  Dashboard admin  {{ .Values.gateway.admin.email }} /
+    kubectl -n {{ .Release.Namespace }} get secret {{ include "mcp.secretName" . }} -o jsonpath='{.data.gateway-admin-password}' | base64 -d; echo
+  WordPress admin  {{ .Values.store.adminUser }} /
+    kubectl -n {{ .Release.Namespace }} get secret {{ include "mcp.secretName" . }} -o jsonpath='{.data.wp-admin-password}' | base64 -d; echo
+  WordPress admin UI: {{ include "mcp.storeUrl" . }}/wp-admin
+{{ if not .Values.secrets.llmApiKey }}
+The chat agent needs an LLM key (not set). Add one with:
+  helm upgrade {{ .Release.Name }} <chart> --reuse-values --set secrets.llmApiKey=...  &&  kubectl rollout restart deploy/{{ .Release.Name }}-gateway
+{{- end }}

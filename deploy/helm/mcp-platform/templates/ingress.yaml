@@ -1,0 +1,61 @@
+{{- $r := .Release.Name }}
+{{- $tls := .Values.ingress.tls }}
+{{- if .Values.store.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $r }}-store
+  labels: {{- include "mcp.labels" (dict "root" . "component" "ingress-store") | nindent 4 }}
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: 32m
+    {{- if and $tls.enabled $tls.clusterIssuer }}
+    cert-manager.io/cluster-issuer: {{ $tls.clusterIssuer }}
+    {{- end }}
+    {{- with .Values.ingress.annotations }}{{ toYaml . | nindent 4 }}{{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if $tls.enabled }}
+  tls:
+    - hosts: [{{ .Values.ingress.storeHost | quote }}]
+      secretName: {{ $tls.storeSecretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.storeHost | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: {{ $r }}-wordpress, port: { name: http } } }
+---
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $r }}-gateway
+  labels: {{- include "mcp.labels" (dict "root" . "component" "ingress-gateway") | nindent 4 }}
+  annotations:
+    {{- if and $tls.enabled $tls.clusterIssuer }}
+    cert-manager.io/cluster-issuer: {{ $tls.clusterIssuer }}
+    {{- end }}
+    {{- with .Values.ingress.annotations }}{{ toYaml . | nindent 4 }}{{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if $tls.enabled }}
+  tls:
+    - hosts: [{{ .Values.ingress.gatewayHost | quote }}]
+      secretName: {{ $tls.gatewaySecretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.gatewayHost | quote }}
+      http:
+        paths:
+          # Only these two prefixes reach the gateway. /metrics, /healthz and /readyz stay cluster-internal.
+          - path: /api
+            pathType: Prefix
+            backend: { service: { name: {{ $r }}-gateway, port: { name: http } } }
+          - path: /mcp
+            pathType: Prefix
+            backend: { service: { name: {{ $r }}-gateway, port: { name: http } } }
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: {{ $r }}-dashboard, port: { name: http } } }

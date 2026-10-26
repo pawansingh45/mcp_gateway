@@ -1,0 +1,35 @@
+:root { --bg:#f6f7f9; --fg:#1b1f24; --muted:#6a737d; --card:#fff; --line:#dfe3e8; --accent:#2f5bea; --ok:#1a7f4b; --bad:#c0392b; --warn:#8a6d00; }
+@media (prefers-color-scheme: dark) { :root { --bg:#14171b; --fg:#e6e8eb; --muted:#9aa4af; --card:#1d2227; --line:#2e353c; --accent:#7b9cff; --ok:#46c27f; --bad:#ff7a6b; --warn:#e0b84a; } }
+* { box-sizing: border-box; }
+body { margin:0; font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--fg); }
+header { display:flex; align-items:center; gap:24px; padding:10px 24px; background:var(--card); border-bottom:1px solid var(--line); }
+nav { display:flex; gap:4px; flex:1; } nav a { padding:6px 12px; border-radius:6px; color:var(--muted); text-decoration:none; }
+nav a.active, nav a:hover { background:var(--bg); color:var(--fg); }
+main { max-width:1100px; margin:24px auto; padding:0 24px; }
+h2 { margin:0 0 12px; } h3 { margin:24px 0 8px; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:14px 16px; margin:10px 0; }
+.card.highlight { border-color:var(--accent); }
+.row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; } .between { justify-content:space-between; } .grow { flex:1; }
+button, input, select { font:inherit; color:inherit; background:var(--card); border:1px solid var(--line); border-radius:6px; padding:6px 10px; }
+button { cursor:pointer; } button:hover:not(:disabled) { border-color:var(--accent); } button:disabled { opacity:.5; cursor:default; }
+button.primary { background:var(--accent); border-color:var(--accent); color:#fff; } button.danger { color:var(--bad); }
+label { display:block; margin:10px 0; font-weight:500; } label input, label select { display:block; width:100%; margin-top:4px; font-weight:400; }
+table { width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--line); border-radius:8px; margin:10px 0; }
+th, td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); vertical-align:top; } th { color:var(--muted); font-weight:500; } tr.dim { opacity:.55; }
+code { font:12px ui-monospace,Menlo,monospace; background:var(--bg); padding:1px 5px; border-radius:4px; }
+pre { margin:4px 0; padding:6px; background:var(--bg); border-radius:6px; font:12px ui-monospace,monospace; white-space:pre-wrap; word-break:break-word; max-height:180px; overflow:auto; }
+.muted { color:var(--muted); } .small { font-size:12px; } .pad { padding:24px; }
+.error { color:var(--bad); margin:8px 0; }
+.badge { display:inline-block; padding:1px 8px; border-radius:10px; font-size:12px; border:1px solid currentColor; }
+.badge.connected { color:var(--ok); } .badge.unreachable { color:var(--bad); } .badge.disabled { color:var(--muted); } .badge.pending { color:var(--warn); }
+.tag { margin-left:6px; padding:0 6px; border-radius:4px; background:var(--bg); color:var(--muted); font-size:11px; }
+.tools { margin:10px 0 0; padding-left:18px; } .tools li { margin:3px 0; }
+.copybox { display:flex; gap:8px; margin:6px 0; } .copybox code { flex:1; padding:6px 8px; overflow-x:auto; white-space:nowrap; }
+.center-card { max-width:360px; margin:12vh auto; padding:24px; background:var(--card); border:1px solid var(--line); border-radius:10px; }
+.modal-backdrop { position:fixed; inset:0; background:rgba(0,0,0,.45); display:flex; align-items:center; justify-content:center; padding:16px; }
+.modal { background:var(--card); border-radius:10px; padding:20px 24px; width:100%; max-width:520px; max-height:90vh; overflow:auto; }
+.chat .messages { min-height:320px; max-height:60vh; overflow:auto; padding:8px 0; }
+.msg { margin:10px 0; } .msg.user { text-align:right; }
+.bubble { display:inline-block; max-width:80%; padding:8px 12px; border-radius:12px; background:var(--card); border:1px solid var(--line); text-align:left; white-space:pre-wrap; }
+.msg.user .bubble { background:var(--accent); border-color:var(--accent); color:#fff; }
+.calls { margin:6px 0 0 8px; text-align:left; } .call { margin:6px 0; padding-left:8px; border-left:3px solid var(--line); } .call .result { color:var(--muted); }

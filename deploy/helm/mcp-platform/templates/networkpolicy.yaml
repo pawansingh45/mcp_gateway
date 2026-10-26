@@ -1,0 +1,68 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- /* Default-deny INGRESS for every pod of this release, then allow exactly the edges in the architecture:
+       ingress-controller -> {wordpress, gateway, dashboard}
+       gateway            -> {woo-mcp, clock-mcp, notes-mcp}
+       woo-mcp            -> wordpress -> mariadb
+   Requires a CNI that enforces NetworkPolicy (k3s: yes, built in; kind: install Calico, see README).
+   The upstream bearer tokens are the second layer if a policy is not enforced. */ -}}
+{{- $r := .Release.Name }}
+{{- $ctl := .Values.networkPolicy.ingressControllerNamespace }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $r }}-default-deny-ingress
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/instance: {{ $r }} }
+  policyTypes: [Ingress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $r }}-allow-from-ingress-controller
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: app.kubernetes.io/component, operator: In, values: [wordpress, gateway, dashboard] }
+      - { key: app.kubernetes.io/instance, operator: In, values: [{{ $r }}] }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: {{ $ctl }} }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $r }}-allow-gateway-to-mcp-servers
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: app.kubernetes.io/component, operator: In, values: [woo-mcp, clock-mcp, notes-mcp] }
+      - { key: app.kubernetes.io/instance, operator: In, values: [{{ $r }}] }
+  policyTypes: [Ingress]
+  ingress:
+    {{- include "mcp.np.from" (dict "root" . "from" "gateway") | nindent 4 }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $r }}-allow-woo-mcp-to-wordpress
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/instance: {{ $r }}, app.kubernetes.io/component: wordpress }
+  policyTypes: [Ingress]
+  ingress:
+    {{- include "mcp.np.from" (dict "root" . "from" "woo-mcp") | nindent 4 }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $r }}-allow-wordpress-to-mariadb
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/instance: {{ $r }}, app.kubernetes.io/component: mariadb }
+  policyTypes: [Ingress]
+  ingress:
+    {{- include "mcp.np.from" (dict "root" . "from" "wordpress") | nindent 4 }}
+{{- end }}

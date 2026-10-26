@@ -1,0 +1,101 @@
+{{- $sel := dict "root" . "component" "gateway" }}
+{{- $secret := include "mcp.secretName" . }}
+{{- $r := .Release.Name }}
+{{- /* Servers registered at first boot. Credentials are referenced BY ENV VAR NAME and read from the Secret. */ -}}
+{{- $seeds := list }}
+{{- $hosts := list }}
+{{- if .Values.store.enabled }}
+{{- $seeds = append $seeds (dict "slug" "woocommerce" "name" "WooCommerce" "url" (printf "http://%s-woo-mcp:8080/mcp" $r) "credential_env" "MCP_WOO_TOKEN") }}
+{{- $hosts = append $hosts (printf "%s-woo-mcp" $r) }}
+{{- end }}
+{{- if .Values.referenceServers.enabled }}
+{{- $seeds = append $seeds (dict "slug" "clock" "name" "Clock" "url" (printf "http://%s-clock-mcp:8080/mcp" $r) "credential_env" "MCP_CLOCK_TOKEN") }}
+{{- $seeds = append $seeds (dict "slug" "notes" "name" "Notes" "url" (printf "http://%s-notes-mcp:8080/mcp" $r) "credential_env" "MCP_NOTES_TOKEN") }}
+{{- $hosts = concat $hosts (list (printf "%s-clock-mcp" $r) (printf "%s-notes-mcp" $r)) }}
+{{- end }}
+{{- $seeds = concat $seeds .Values.gateway.extraSeedServers }}
+{{- $hosts = concat $hosts .Values.gateway.ssrf.extraAllowedHosts }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $r }}-gateway
+  labels: {{- include "mcp.labels" $sel | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep      # users, hashed keys and the audit log live here
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- include "mcp.storageClass" . | nindent 2 }}
+  resources:
+    requests: { storage: {{ .Values.gateway.persistence.size }} }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $r }}-gateway
+  labels: {{- include "mcp.labels" $sel | nindent 4 }}
+spec:
+  selector: {{- include "mcp.selector" $sel | nindent 4 }}
+  ports: [{ name: http, port: 8080, targetPort: http }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $r }}-gateway
+  labels: {{- include "mcp.labels" $sel | nindent 4 }}
+spec:
+  replicas: 1                          # SQLite on a RWO volume: see docs/SYSTEM_DESIGN.md for scale-out
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: {{- include "mcp.selector" $sel | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "mcp.labels" $sel | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false   # no component talks to the Kubernetes API
+      {{- include "mcp.pullSecrets" . | nindent 6 }}
+      {{- include "mcp.podSecurity" . | nindent 6 }}
+      containers:
+        - name: gateway
+          image: {{ include "mcp.image" (dict "root" . "img" .Values.images.gateway) }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          {{- include "mcp.containerSecurity" . | nindent 10 }}
+          ports: [{ name: http, containerPort: 8080 }]
+          env:
+            - { name: GATEWAY_DB_PATH, value: /data/gateway.db }
+            - { name: PUBLIC_URL, value: "{{ include "mcp.gatewayUrl" . }}" }
+            - { name: COOKIE_SECURE, value: {{ .Values.gateway.cookieSecure | quote }} }
+            - { name: ADMIN_EMAIL, value: {{ .Values.gateway.admin.email | quote }} }
+            - { name: CALL_TIMEOUT_SECONDS, value: {{ .Values.gateway.callTimeoutSeconds | quote }} }
+            - { name: RATE_LIMIT_PER_MINUTE, value: {{ .Values.gateway.rateLimitPerMinute | quote }} }
+            - { name: STORE_TIMEZONE, value: {{ .Values.store.timezone | quote }} }
+            - { name: LLM_BASE_URL, value: {{ .Values.gateway.llm.baseUrl | quote }} }
+            - { name: LLM_MODEL, value: {{ .Values.gateway.llm.model | quote }} }
+            - { name: SSRF_ALLOWED_HOSTS, value: {{ $hosts | join "," | quote }} }
+            - { name: SEED_SERVERS, value: {{ $seeds | toJson | quote }} }
+            - name: GATEWAY_ENCRYPTION_KEYS
+              valueFrom: { secretKeyRef: { name: {{ $secret }}, key: gateway-encryption-key } }
+            - name: ADMIN_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ $secret }}, key: gateway-admin-password } }
+            - name: LLM_API_KEY
+              valueFrom: { secretKeyRef: { name: {{ $secret }}, key: llm-api-key, optional: true } }
+            - name: MCP_WOO_TOKEN
+              valueFrom: { secretKeyRef: { name: {{ $secret }}, key: mcp-woo-token } }
+            - name: MCP_CLOCK_TOKEN
+              valueFrom: { secretKeyRef: { name: {{ $secret }}, key: mcp-clock-token } }
+            - name: MCP_NOTES_TOKEN
+              valueFrom: { secretKeyRef: { name: {{ $secret }}, key: mcp-notes-token } }
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources: {{- toYaml .Values.gateway.resources | nindent 12 }}
+          volumeMounts:
+            - { name: data, mountPath: /data }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - { name: tmp, emptyDir: {} }
+        - name: data
+          persistentVolumeClaim: { claimName: {{ $r }}-gateway }

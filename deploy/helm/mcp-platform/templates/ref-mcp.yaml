@@ -1,0 +1,78 @@
+{{- if .Values.referenceServers.enabled }}
+{{- $secret := include "mcp.secretName" . }}
+{{- range $kind := list "clock" "notes" }}
+{{- $sel := dict "root" $ "component" (printf "%s-mcp" $kind) }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $.Release.Name }}-{{ $kind }}-mcp
+  labels: {{- include "mcp.labels" $sel | nindent 4 }}
+spec:
+  selector: {{- include "mcp.selector" $sel | nindent 4 }}
+  ports: [{ name: http, port: 8080, targetPort: http }]
+{{- if and (eq $kind "notes") $.Values.referenceServers.notesPersistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $.Release.Name }}-notes-mcp
+  labels: {{- include "mcp.labels" $sel | nindent 4 }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- include "mcp.storageClass" $ | nindent 2 }}
+  resources:
+    requests: { storage: {{ $.Values.referenceServers.notesPersistence.size }} }
+{{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $.Release.Name }}-{{ $kind }}-mcp
+  labels: {{- include "mcp.labels" $sel | nindent 4 }}
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: {{- include "mcp.selector" $sel | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "mcp.labels" $sel | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false   # no component talks to the Kubernetes API
+      {{- include "mcp.pullSecrets" $ | nindent 6 }}
+      {{- include "mcp.podSecurity" $ | nindent 6 }}
+      containers:
+        - name: {{ $kind }}-mcp
+          image: {{ include "mcp.image" (dict "root" $ "img" $.Values.images.refMcp) }}
+          imagePullPolicy: {{ $.Values.images.pullPolicy }}
+          {{- include "mcp.containerSecurity" $ | nindent 10 }}
+          ports: [{ name: http, containerPort: 8080 }]
+          env:
+            - { name: REF_SERVER, value: {{ $kind }} }
+            - name: MCP_AUTH_TOKEN
+              valueFrom: { secretKeyRef: { name: {{ $secret }}, key: mcp-{{ $kind }}-token } }
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources: {{- toYaml $.Values.referenceServers.resources | nindent 12 }}
+          volumeMounts:
+            - { name: data, mountPath: /data }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - { name: tmp, emptyDir: {} }
+        - name: data
+          {{- if and (eq $kind "notes") $.Values.referenceServers.notesPersistence.enabled }}
+          persistentVolumeClaim: { claimName: {{ $.Release.Name }}-notes-mcp }
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+{{- end }}
+{{- end }}

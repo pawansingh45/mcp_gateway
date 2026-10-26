@@ -1,0 +1,69 @@
+{{- if .Values.store.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-store-bootstrap
+  labels:
+    {{- include "mcp.labels" (dict "root" . "component" "store-bootstrap") | nindent 4 }}
+data:
+  bootstrap.sh: |
+    #!/bin/bash
+    # Idempotent: safe to re-run on every pod start. Runs as a sidecar of the WordPress pod so it shares
+    # the WordPress volume without needing RWX storage or pod affinity tricks.
+    set -euo pipefail
+    cd /var/www/html
+    log() { echo "[bootstrap] $*"; }
+
+    log "waiting for wp-config.php (written by the WordPress container entrypoint)"
+    until [ -f wp-config.php ]; do sleep 2; done
+    log "waiting for the database"
+    until wp db query "SELECT 1" >/dev/null 2>&1; do sleep 3; done
+    log "waiting for Apache on port 80"
+    until (echo > /dev/tcp/127.0.0.1/80) 2>/dev/null; do sleep 2; done
+
+    if ! wp core is-installed 2>/dev/null; then
+      log "installing WordPress"
+      wp core install --url="$SITE_URL" --title="$SITE_TITLE" --admin_user="$WP_ADMIN_USER" \
+        --admin_password="$WP_ADMIN_PASSWORD" --admin_email="$WP_ADMIN_EMAIL" --skip-email
+    fi
+
+    wp core update || true
+    wp core update-db || true
+    wp option update timezone_string "$STORE_TIMEZONE" >/dev/null
+    wp rewrite structure '/%postname%/' || true
+
+    if ! wp plugin is-installed woocommerce; then
+      log "installing WooCommerce ${WOO_VERSION:-latest} (needs egress to wordpress.org on first boot)"
+      wp plugin install woocommerce ${WOO_VERSION:+--version="$WOO_VERSION"} --activate
+    fi
+    wp plugin activate woocommerce 2>/dev/null || true
+
+    log "configuring store"
+    wp option update woocommerce_currency "$STORE_CURRENCY" >/dev/null
+    wp option update woocommerce_default_country "$STORE_COUNTRY" >/dev/null
+    # Cash on delivery: the test-friendly payment method required by the assignment.
+    wp option update woocommerce_cod_settings '{"enabled":"yes","title":"Cash on delivery","description":"Pay when you receive the order.","enable_for_methods":[],"enable_for_virtual":"yes"}' --format=json >/dev/null
+    wp wc tool run install_pages --user="$WP_ADMIN_USER" >/dev/null 2>&1 || true   # shop/cart/checkout pages
+    # Physical products need a shipping method or checkout is blocked: free shipping for "everywhere else".
+    if [ "$(wp wc shipping_zone_method list 0 --user="$WP_ADMIN_USER" --format=count 2>/dev/null || echo 0)" = "0" ]; then
+      wp wc shipping_zone_method create 0 --method_id=free_shipping --user="$WP_ADMIN_USER" >/dev/null || true
+    fi
+
+    log "ensuring the REST API key used by the WooCommerce MCP server"
+    wp eval '
+      global $wpdb;
+      $ck = getenv("WOO_CONSUMER_KEY"); $cs = getenv("WOO_CONSUMER_SECRET");
+      $user = get_user_by("login", getenv("WP_ADMIN_USER"));
+      $table = $wpdb->prefix . "woocommerce_api_keys";
+      $hash = wc_api_hash($ck);
+      if (!$wpdb->get_var($wpdb->prepare("SELECT key_id FROM $table WHERE consumer_key = %s", $hash))) {
+        $wpdb->insert($table, array("user_id" => $user->ID, "description" => "mcp-server (managed by Helm)",
+          "permissions" => "read_write", "consumer_key" => $hash, "consumer_secret" => $cs, "truncated_key" => substr($ck, -7)));
+        echo "created\n";
+      } else { echo "exists\n"; }
+    '
+
+    touch /tmp/bootstrap-done
+    log "done"
+    while true; do sleep 3600; done
+{{- end }}
